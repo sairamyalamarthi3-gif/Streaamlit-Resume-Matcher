@@ -1,105 +1,117 @@
 import streamlit as st
+import os
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+from pypdf import PdfReader
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from openai import OpenAI
 
-# Page config
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# ---------- Page Config ----------
 st.set_page_config(
-    page_title="AI Resume Skill Matcher",
+    page_title="AI Resume Enhancer",
     page_icon="🤖",
     layout="wide"
 )
 
-st.title("🤖 AI Resume Skill Matcher")
-st.markdown(
-    "Analyze how well your resume matches a job description and improve it intelligently."
+st.title("🤖 AI Resume Matcher & GPT Enhancer")
+st.caption("Upload resume → Analyze → Auto-rewrite with GPT → Export PDF")
+
+# ---------- Utility Functions ----------
+def extract_pdf_text(uploaded_file):
+    reader = PdfReader(uploaded_file)
+    return " ".join(page.extract_text() for page in reader.pages)
+
+def similarity_score(resume, jd):
+    tfidf = TfidfVectorizer(stop_words="english")
+    vectors = tfidf.fit_transform([resume, jd])
+    score = cosine_similarity(vectors[0:1], vectors[1:2])[0][0]
+    return round(score * 100, 2)
+
+def gpt_rewrite_resume(resume, jd):
+    prompt = f"""
+You are an AI resume assistant.
+Rewrite the resume to better match the job description.
+Do NOT fabricate experience.
+Improve skills, bullets, and wording professionally.
+
+RESUME:
+{resume}
+
+JOB DESCRIPTION:
+{jd}
+"""
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.4
+    )
+    return response.choices[0].message.content
+
+def generate_pdf(text, filename="enhanced_resume.pdf"):
+    c = canvas.Canvas(filename, pagesize=A4)
+    width, height = A4
+    y = height - 40
+
+    for line in text.split("\n"):
+        if y < 40:
+            c.showPage()
+            y = height - 40
+        c.drawString(40, y, line)
+        y -= 14
+
+    c.save()
+    return filename
+
+# ---------- UI Tabs ----------
+tab1, tab2, tab3 = st.tabs(
+    ["📄 Upload Resume", "📊 Match Analysis", "✨ GPT Enhancement"]
 )
 
-st.divider()
+with tab1:
+    uploaded_pdf = st.file_uploader("Upload Resume (PDF)", type="pdf")
+    job_desc = st.text_area("Paste Job Description", height=250)
 
-# Layout
-col1, col2 = st.columns(2)
+    if uploaded_pdf:
+        resume_text = extract_pdf_text(uploaded_pdf)
+        st.success("Resume uploaded successfully")
+        st.text_area("Extracted Resume Text", resume_text, height=250)
 
-with col1:
-    resume_text = st.text_area(
-        "📄 Paste Your Resume",
-        height=300,
-        placeholder="Paste your resume text here..."
-    )
+with tab2:
+    if uploaded_pdf and job_desc:
+        score = similarity_score(resume_text, job_desc)
 
-with col2:
-    job_text = st.text_area(
-        "🧾 Paste Job Description",
-        height=300,
-        placeholder="Paste job description here..."
-    )
+        st.metric("Match Score", f"{score}%")
+        st.progress(int(score))
 
-st.divider()
-
-if st.button("🔍 Analyze Match", use_container_width=True):
-    if resume_text and job_text:
-        documents = [resume_text, job_text]
-
-        tfidf = TfidfVectorizer(stop_words="english")
-        vectors = tfidf.fit_transform(documents)
-
-        similarity = cosine_similarity(vectors[0:1], vectors[1:2])[0][0]
-        match_percentage = round(similarity * 100, 2)
-
-        resume_words = set(resume_text.lower().split())
-        job_words = set(job_text.lower().split())
-        missing_skills = list(job_words - resume_words)
-
-        st.subheader("📊 Match Result")
-        st.progress(int(match_percentage))
-        st.metric("Match Score", f"{match_percentage}%")
-
-        if match_percentage >= 70:
-            st.success("🎉 Excellent match! Your resume aligns well.")
-            st.balloons()
-
-        elif 40 <= match_percentage < 70:
-            st.warning("⚠️ Moderate match. Resume can be improved.")
-
+        if score >= 70:
+            st.success("Strong match")
+        elif score >= 40:
+            st.warning("Moderate match")
         else:
-            st.error("❌ Low match. Resume needs improvement.")
+            st.error("Low match")
 
-        # Missing Skills
-        st.subheader("📌 Missing / Weak Keywords")
-        if missing_skills:
-            st.write(missing_skills[:15])
-        else:
-            st.write("No major missing keywords detected.")
+with tab3:
+    if uploaded_pdf and job_desc:
+        if st.button("🤖 Enhance Resume with GPT", use_container_width=True):
+            with st.spinner("GPT is rewriting your resume..."):
+                enhanced_resume = gpt_rewrite_resume(resume_text, job_desc)
 
-        # Resume improvement section
-        if match_percentage < 60:
-            st.divider()
-            st.subheader("✍️ Improve Your Resume")
+            new_score = similarity_score(enhanced_resume, job_desc)
 
-            st.info(
-                "Tips to improve your resume:\n"
-                "- Add missing skills naturally\n"
-                "- Use keywords from the job description\n"
-                "- Mention tools, frameworks, and impact\n"
-                "- Avoid generic sentences"
-            )
+            st.subheader("✨ Enhanced Resume")
+            st.text_area("", enhanced_resume, height=300)
 
-            improved_resume = st.text_area(
-                "🛠️ Edit Your Resume Below and Re-check",
-                value=resume_text,
-                height=250
-            )
+            st.metric("Updated Match Score", f"{new_score}%")
+            st.progress(int(new_score))
 
-            if st.button("🔁 Re-Analyze Updated Resume"):
-                new_docs = [improved_resume, job_text]
-                new_vectors = tfidf.fit_transform(new_docs)
-                new_similarity = cosine_similarity(
-                    new_vectors[0:1], new_vectors[1:2]
-                )[0][0]
-
-                new_score = round(new_similarity * 100, 2)
-
-                st.success(f"✅ Updated Match Score: {new_score}%")
-                st.progress(int(new_score))
-
-    else:
-        st.warning("Please provide both Resume and Job Description.")
+            pdf_file = generate_pdf(enhanced_resume)
+            with open(pdf_file, "rb") as f:
+                st.download_button(
+                    "⬇️ Download Enhanced Resume (PDF)",
+                    f,
+                    file_name="Enhanced_Resume.pdf",
+                    use_container_width=True
+                )
