@@ -1,1 +1,5 @@
-# Streaamlit-Resume-Matcher
+streamlit
+scikit-learn
+openai
+pypdf
+reportlab
