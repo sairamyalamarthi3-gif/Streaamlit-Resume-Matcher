@@ -7,7 +7,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from openai import OpenAI
 
-client = OpenAI(api_key=os.getenv("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"))
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))"))
 
 # ---------- Page Config ----------
 st.set_page_config(
